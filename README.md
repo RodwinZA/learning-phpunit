@@ -1470,3 +1470,289 @@ Now when run all the tests pass.
 
 ### Dependency injection: inject objects that a class depends on
 
+At the moment our `User` class isn't dependent on any other classes. Let's change this by adding a dependence on the
+Mailer class.
+
+First let's add a property for the user's email address, then let's add a notify method, so we can send the user a message
+which takes the text of a message as an argument. In the `notify` method we will use the `Mailer` class and call the 
+`sendMessage` method, passing in the user's email address and the message and returning its return value directly.
+
+So now when we use the `notify` method on a `User` object it will use the `Mailer` class to send a message. The `Mailer`
+class still doesn't have any real functionality aside from faking a delay of three seconds.
+
+```php
+<?php
+
+class User
+{
+	public string $first_name;
+	public string $surname;
+
+	public string $email;
+
+	public function getFullName(): string
+	{
+		return trim("$this->first_name $this->surname");
+	}
+
+	public function notify($message): true
+    {
+		$mailer = new Mailer;
+
+		return $mailer->sendMessage($this->email, $message);
+	}
+}
+```
+
+Let's add a test to the `UserTest` class to test this new method.
+
+```php
+<?php
+
+use PHPUnit\Framework\TestCase;
+
+class UserTest extends TestCase
+{
+	public function testReturnsFullName()
+	{
+		$user = new User;
+
+		$user->first_name = "Teresa";
+		$user->surname = "Green";
+
+		$this->assertEquals("Teresa Green", $user->getFullName());
+	}
+
+	public function testFullNameIsEmptyByDefault()
+	{
+		$user = new User;
+
+		$this->assertEquals("", $user->getFullName());
+	}
+
+	/*
+	 * @test
+	 */
+	public function user_has_firstname()
+	{
+		$user = new User;
+
+		$user->first_name = "Teresa";
+
+		$this->assertEquals("Teresa", $user->first_name);
+	}
+
+	public function testNotificationIsSent()
+	{
+		$user = new User;
+
+		$user->email = 'dave@example.com';
+
+		$this->assertTrue($user->notify('Hello'));
+	}
+}
+```
+
+We don't want to use the real `Mailer` class for reasons previously discussed, so let's create a mock instead.
+
+```php
+    /**
+     * @throws \PHPUnit\Framework\MockObject\Exception
+     */
+    public function testNotificationIsSent()
+	{
+		$user = new User;
+
+        $mock_mailer = $this->createMock(Mailer::class);
+        $mock_mailer->method('sendMessage')
+            ->willReturn(true);
+
+		$user->email = 'dave@example.com';
+
+		$this->assertTrue($user->notify('Hello'));
+	}
+```
+
+When we run this nothing has changed because we are still using the real `Mailer` class. (Note the three-second delay)
+So how do we tell the `User` class to use the mock instead? At the moment we can't. The dependency on the `Mailer`
+class is hardcoded into the `User` class inside this method:
+
+```php
+	public function notify($message): true
+    {
+		$mailer = new Mailer;
+
+		return $mailer->sendMessage($this->email, $message);
+	}
+```
+
+When testing this class we currently have no way of telling  the `User` class to use the mock object we just created.
+This is where dependency injection comes in. Instead of having a hardcoded dependency like this inside a class, we 
+inject any dependent classes inside this class so that we can replace them when we are testing.
+
+```php
+<?php
+
+class User
+{
+	public $first_name;
+	public $surname;
+
+	public $email;
+
+    // Injecting the Mailer dependency
+    private Mailer $mailer;
+
+
+//    We can inject the dependency in a setter or in a constructor
+    public function setMailer(Mailer $mailer): void
+    {
+        $this->mailer = $mailer;
+    }
+
+	public function getFullName(): string
+	{
+		return trim("$this->first_name $this->surname");
+	}
+
+	public function notify($message): true
+    {
+        // Note here we have removed the Mailer object previously created
+		return $this->mailer->sendMessage($this->email, $message);
+	}
+}
+```
+
+```php
+<?php
+
+use PHPUnit\Framework\TestCase;
+
+class UserTest extends TestCase
+{
+	public function testReturnsFullName()
+	{
+		$user = new User;
+
+		$user->first_name = "Teresa";
+		$user->surname = "Green";
+
+		$this->assertEquals("Teresa Green", $user->getFullName());
+	}
+
+	public function testFullNameIsEmptyByDefault()
+	{
+		$user = new User;
+
+		$this->assertEquals("", $user->getFullName());
+	}
+
+	/*
+	 * @test
+	 */
+	public function user_has_firstname()
+	{
+		$user = new User;
+
+		$user->first_name = "Teresa";
+
+		$this->assertEquals("Teresa", $user->first_name);
+	}
+
+    /**
+     * @throws \PHPUnit\Framework\MockObject\Exception
+     */
+    public function testNotificationIsSent()
+	{
+		$user = new User;
+
+        $mock_mailer = $this->createMock(Mailer::class);
+        $mock_mailer->method('sendMessage')
+            ->willReturn(true);
+
+        // The mock mailer will now get passed to our injected setMailer method
+        $user->setMailer($mock_mailer);
+
+		$user->email = 'dave@example.com';
+
+		$this->assertTrue($user->notify('Hello'));
+	}
+}
+```
+
+### Test object interactions: verify how a dependency is used
+
+When testing the `User` class we just replaced a dependency using a mocked object. When the `notify` method in the `User`
+class uses this object it will call the `sendMessage` method on the mock instead of a real `Mailer` object. In the test,
+all that we're testing is that the `notify` method returns `true`. We're not verifying that the `sendMessage` method
+is called at all.
+
+
+```php
+    public function testNotificationIsSent()
+	{
+		$user = new User;
+
+        $mock_mailer = $this->createMock(Mailer::class);
+        $mock_mailer->method('sendMessage')
+            ->willReturn(true);
+
+        $user->setMailer($mock_mailer);
+
+		$user->email = 'dave@example.com';
+
+		$this->assertTrue($user->notify('Hello'));
+	}
+```
+
+In addition to setting the returned value of a stubbed method we can set expectations on it. E.g. when calling the `notify`
+method on a `User` object to make sure it is interacting with the `Mailer` object as expected. We want to know that the
+`Mailer` `sendMessage` method has been called. We can do this by adding the `expects` method when we create and configure
+the mock. The argument to this method is a matcher method that tells PHPUnit how many times to expect the method call. E.g.
+the `once()` matcher expects the method to be called only once. There are other matcher methods available.
+
+```php
+    public function testNotificationIsSent()
+	{
+		$user = new User;
+
+        $mock_mailer = $this->createMock(Mailer::class);
+
+        $mock_mailer->expects($this->once())
+            ->method('sendMessage')
+            ->willReturn(true);
+
+        $user->setMailer($mock_mailer);
+
+		$user->email = 'dave@example.com';
+
+		$this->assertTrue($user->notify('Hello'));
+	}
+```
+
+We can also set expectations on the values that are passed as arguments to the stub method using the `with()` method.
+The number of arguments to this method will match the number of arguments to the stubbed method, and again we use matches
+to describe the expected values that should be passed.
+
+```php
+    public function testNotificationIsSent()
+	{
+		$user = new User;
+
+        $mock_mailer = $this->createMock(Mailer::class);
+
+        $mock_mailer->expects($this->once())
+            ->method('sendMessage')
+            ->with($this->equalTo('dave@example.com'), $this->equalTo('Hello'))
+            ->willReturn(true);
+
+        $user->setMailer($mock_mailer);
+
+		$user->email = 'dave@example.com';
+
+		$this->assertTrue($user->notify('Hello'));
+	}
+```
+
+In addition to the `equalTo` matcher method there are several others that are not found in the PHPUnit docs but they are
+in the PHPUnit source code.
