@@ -1756,3 +1756,148 @@ to describe the expected values that should be passed.
 
 In addition to the `equalTo` matcher method there are several others that are not found in the PHPUnit docs but they are
 in the PHPUnit source code.
+
+### Customise the creation of the mock object: the getMockBuilder method
+
+We just used the `createMock` method to create a mock object, so we could test the `User` class without relying on a real
+`Mailer` object. This mock object has all its public methods stubbed so the original code is replaced, and they all
+return `null`, although we can override the value being returned using the `willReturn` method.
+
+There may be a case where you don't want to stub out an original method and want the original code to run. Let's look
+at an example.
+
+Let's throw an exception in the `Mailer` class `sendMessage` method if the email is empty. In practice, you would add
+your own exception class, but we will keep it simple with a standard one.
+
+```php
+<?php
+
+class Mailer
+{
+    /**
+     * @param $email
+     * @param $message
+     * @return true
+     * @throws Exception
+     */
+
+	public function sendMessage($email, $message): true
+    {
+        if (empty($email))
+        {
+            throw new Exception();
+        }
+
+		sleep(3);
+		echo "Send '$message' to '$email'";
+
+		return true;
+	}
+}
+```
+
+In the `UserTest` class we'll add a new test method to test that an exception is thrown if we try and notify a user
+that does not have an email.
+
+```php
+    /**
+     * @throws \PHPUnit\Framework\MockObject\Exception
+     */
+    public function testCannotNotifyUserWithNoEmail()
+    {
+        $user = new User();
+
+        $mock_mailer = $this->createMock(Mailer::class);
+        $user->setMailer($mock_mailer);
+
+        // We haven't set the email address seo we expect an
+        // exception to be thrown
+        $this->expectException(Exception::class);
+
+        $user->notify("Hello");
+    }
+```
+
+When we run the above we get a failure because no exception was thrown. This is because when we create a mock object using
+the `createMock` method all the methods are stubbed so the stubbed methods have no content and just returns `null`. One
+way to fix the test would be to configure the mock object's `sendMessage` method to throw an exception in a similar way
+that we can set what the return value is.
+
+```php
+    public function testCannotNotifyUserWithNoEmail()
+    {
+        $user = new User();
+
+        $mock_mailer = $this->createMock(Mailer::class);
+
+        // We set the method to throw an exception
+        $mock_mailer->method('sendMessage')
+                    ->will($this->throwException(new Exception()));
+
+        $user->setMailer($mock_mailer);
+
+        // We haven't set the email address seo we expect an
+        // exception to be thrown
+        $this->expectException(Exception::class);
+
+        $user->notify("Hello");
+    }
+```
+
+Now when running the tests they pass. However, by doing this we are just duplicating the code in the original method. It
+would be better if the mock used the original method if all it is going to do is to throw an exception.
+
+Instead of using the `createMock` method we can use the `getMockBuilder` method calling the `getMock` method on it to get
+the actual mock object.
+
+By using `getMockBuilder` we can customize the mock object that is generated. There are methods to specify the methods that
+are replaced, to specify those that aren't, to disable the constructor of the original object, etc.
+
+```php
+    /**
+     * @throws \PHPUnit\Framework\MockObject\Exception
+     */
+    public function testCannotNotifyUserWithNoEmail()
+    {
+        $user = new User();
+
+        $mock_mailer = $this->getMockBuilder(Mailer::class)
+                            ->onlyMethods([])
+                            ->getMock();
+
+        $user->setMailer($mock_mailer);
+
+        // We haven't set the email address seo we expect an
+        // exception to be thrown
+        $this->expectException(Exception::class);
+
+        $user->notify("Hello");
+    }
+```
+
+Another option is to pass in an array containing the names of the methods that will be stubbed, e.g.
+
+```php
+    public function testCannotNotifyUserWithNoEmail()
+    {
+        $user = new User();
+
+        $mock_mailer = $this->getMockBuilder(Mailer::class)
+                            ->onlyMethods(['sendMessage'])
+                            ->getMock();
+
+        $user->setMailer($mock_mailer);
+
+        // We haven't set the email address seo we expect an
+        // exception to be thrown
+        $this->expectException(Exception::class);
+
+        $user->notify("Hello");
+    }
+```
+
+You would use this method if you only want to stub some methods from the original object. In this case we will just
+do with an empty array so that none of these methods are stubbed.
+
+By using `getMockBuilder` we have full control over the mock object that we create. If you're happy with the defaults
+created by `createMock` you can keep it simple and use that instead.
